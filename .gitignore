@@ -17,3 +17,12 @@ venv/
 # Credenciales
 .cdsapirc
 *.key
+
+# Respaldos temporales
+*.pkl
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store

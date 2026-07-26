@@ -1,0 +1,8 @@
+requests
+pandas
+numpy
+pyarrow
+matplotlib
+folium
+pyproj
+ipykernel
