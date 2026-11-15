@@ -35,3 +35,13 @@ Los datos no se versionan; se regeneran con los notebooks.
 - Coronel Norte gatilla más de la mitad de las emergencias
 - Fuerte estacionalidad: episodios concentrados en mayo-agosto
 - El panel es desbalanceado: 4 estaciones (Coronel Norte, ENEL/ENESA) inician entre 2019 y 2021
+
+
+
+### Mapa 3d 
+
+- MapLibre GL JS (versión 4.7.1): la librería que dibuja el mapa y hace toda la parte 3D, la inclinación, la rotación, los vuelos de cámara (flyTo), los marcadores y los popups. Es de código abierto: nació como una copia libre de Mapbox GL JS cuando Mapbox empezó a cobrar, y hoy la mantiene una comunidad. Se carga desde unpkg.com, por eso necesita internet.
+- OpenFreeMap: el mapa base (calles, nombres, costa, edificios). Es un servicio gratuito, sin registro ni clave, que entrega datos de OpenStreetMap ya listos para MapLibre. El estilo que usamos se llama liberty, y tienen otros como positron (gris claro) y bright, que puedes probar cambiando el final de la URL.
+- AWS Terrain Tiles: los datos de elevación que generan el relieve y el sombreado. Son públicos y gratuitos, y vienen en formato terrarium, donde cada píxel de color guarda una altura.
+
+** Los límites comunales vienen del repositorio caracena/chile-geojson en GitHub, y la parte de Python solo arma el archivo HTML con tus datos.

@@ -1,4 +1,5 @@
 """Cliente para descargar datos desde SINCA (sinca.mma.gob.cl)."""
+import os
 import requests
 import pandas as pd
 
@@ -108,3 +109,40 @@ def traer_estaciones(estaciones, contaminantes, desde, hasta, region="RVIII"):
     if not tablas:
         return None
     return pd.concat(tablas, ignore_index=True)
+
+
+def actualizar_estaciones(estaciones, contaminantes, ruta_parquet, region="RVIII", dias_solape=3):
+    """
+    Descarga solo lo que falta desde la última fecha guardada en ruta_parquet
+    y lo agrega (append + dedupe). Si el archivo no existe, hace la descarga
+    completa desde 2011.
+
+    - dias_solape: re-pide los últimos N días ya guardados, porque SINCA puede
+      revalidar un dato de "no_validado"/"preliminar" a "validado" más tarde.
+    """
+    existente = None
+    if os.path.exists(ruta_parquet):
+        existente = pd.read_parquet(ruta_parquet)
+        desde = (existente["timestamp"].max() - pd.Timedelta(days=dias_solape)).strftime("%y%m%d")
+    else:
+        desde = "110101"
+
+    hasta = pd.Timestamp.today().strftime("%y%m%d")
+
+    print(f"Descargando SINCA desde {desde} hasta {hasta}...")
+    nuevos = traer_estaciones(estaciones, contaminantes, desde, hasta, region)
+
+    if nuevos is None or len(nuevos) == 0:
+        print("Nada nuevo que traer")
+        return existente
+
+    if existente is not None:
+        combinado = pd.concat([existente, nuevos], ignore_index=True)
+        combinado = combinado.drop_duplicates(subset=["timestamp", "codigo", "parametro"], keep="last")
+        combinado = combinado.sort_values("timestamp").reset_index(drop=True)
+    else:
+        combinado = nuevos
+
+    combinado.to_parquet(ruta_parquet, index=False)
+    print(f"Guardado: {len(combinado):,} filas totales ({len(nuevos):,} descargadas en este run)")
+    return combinado
