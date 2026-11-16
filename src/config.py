@@ -47,6 +47,8 @@ ESTACIONES = {
     "802": ("Consultorio San Vicente", "Talcahuano"),
     "807": ("Indura", "Talcahuano"),
     "806": ("Inpesca", "Talcahuano"),
+    "830": ("Liceo Polivalente", "Tome"),
+    "837": ("Nueva Libertad", "Talcahuano"),
 }
 
 # Red a la que pertenece cada estación (fuente: SINCA, campos "calificacion" y "empresa")
@@ -69,6 +71,8 @@ RED_ESTACIONES = {
     "838": ("privada", "ENAP"),      # ENAP Price
     "806": ("privada", "ENAP"),      # Inpesca
     "807": ("privada", "ENAP"),      # Indura
+    "830": ("publica", "MMA"),       # Liceo Polivalente, Tomé
+    "837": ("privada", "CAP"),       # Nueva Libertad (Siderúrgica Huachipato)
 }
 
 ESTACIONES_PUBLICAS = [c for c, (red, _) in RED_ESTACIONES.items() if red == "publica"]
@@ -92,6 +96,15 @@ UTM_ESTACIONES = {
     "802": (667560, 5934137),   # Consultorio San Vicente, Talcahuano
     "806": (669248, 5932605),   # Inpesca, Talcahuano
     "807": (668348, 5929004),   # Indura, Talcahuano
+    "830": (682597, 5947369),   # Liceo Polivalente, Tomé
+    "837": (667977, 5932764),   # Nueva Libertad, Talcahuano
+}
+
+# Población por comuna: Censo 2024 (INE), reportes comunales BCN
+POBLACION_COMUNA = {
+    "Concepción": 230375, "San Pedro de la Paz": 150992, "Talcahuano": 147322,
+    "Coronel": 123648, "Hualpén": 87731, "Chiguayante": 85822,
+    "Tomé": 56907, "Penco": 48971, "Lota": 39980, "Hualqui": 25795,
 }
 
 VARIABLES_METEO = [
