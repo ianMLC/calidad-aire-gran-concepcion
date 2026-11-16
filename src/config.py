@@ -1,8 +1,10 @@
 
 # Umbrales episodios MP2.5 (DS 12/2011, promedio 24h)
 UMBRALES_EPISODIO = {"Regular": 50, "Alerta": 80, "Preemergencia": 110, "Emergencia": 170}
-ARCHIVE_URL_METEO = "https://archive-api.open-meteo.com/v1/archive"
 
+ARCHIVE_URL_METEO = "https://archive-api.open-meteo.com/v1/archive"
+METEO_MODELO= None  # "gfs" o "era5" (era5 es más lento pero más preciso)
+METEO_CELDA= "land"  # "land" o "ocean" (para ERA5, land es más preciso para tierra firme)
 
 # Limpieza
 UMBRAL_RUIDO_NEG = -2
@@ -36,7 +38,7 @@ ESTACIONES = {
     "880": ("Escuadron ENEL", "Coronel"),
     "881": ("Escuadron ENESA", "Coronel"),
     "879": ("Lagunillas ENEL", "Coronel"),
-    "859": ("Lota rural", "Coronel"),
+    "859": ("Lota rural", "Lota"), #"859": ("Lota rural", "Coronel"),
     "860": ("Lota urbana", "Lota"),
     "805": ("Bocatoma", "Hualpen"),
     "838": ("ENAP Price", "Hualpen"),

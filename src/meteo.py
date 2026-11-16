@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 from pyproj import Transformer
 
-from .config import ARCHIVE_URL_METEO, VARIABLES_METEO
 
+from .config import ARCHIVE_URL_METEO, VARIABLES_METEO, METEO_MODELO, METEO_CELDA
 
 def utm_a_latlon(utm_dict):
     """Convierte {codigo: (este, norte)} UTM huso 18S → {codigo: (lat, lon)}."""
@@ -19,8 +19,12 @@ def utm_a_latlon(utm_dict):
     return coords
 
 
-def pedir_openmeteo(lat, lon, desde, hasta, variables=VARIABLES_METEO, reintentos=4):
-    """Baja meteo horaria de una celda ERA5 y la devuelve como DataFrame."""
+def pedir_openmeteo(lat, lon, desde, hasta, variables=VARIABLES_METEO, reintentos=4, modelo=METEO_MODELO, celda=METEO_CELDA):
+    """
+        Baja meteo horaria para un punto y la devuelve como DataFrame.
+        Agrega las columnas celda_lat, celda_lon y celda_elev: el centro de la celda de la
+        grilla que Open-Meteo usó realmente (puede estar a unos km del punto pedido).
+    """    
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -28,7 +32,11 @@ def pedir_openmeteo(lat, lon, desde, hasta, variables=VARIABLES_METEO, reintento
         "end_date": hasta,
         "hourly": ",".join(variables),
         "timezone": "America/Santiago",
+        "cell_selection": celda,
     }
+    if modelo: # None = "best_match" (por defecto de la API)
+        params["models"] = modelo
+        
     for intento in range(reintentos):
         try:
             r = requests.get(ARCHIVE_URL_METEO, params=params, timeout=120)
@@ -36,47 +44,87 @@ def pedir_openmeteo(lat, lon, desde, hasta, variables=VARIABLES_METEO, reintento
                 time.sleep(10 * (intento + 1))
                 continue
             r.raise_for_status()
-            horario = r.json()["hourly"]
-            df = pd.DataFrame(horario)
+            js = r.json()
+            df = pd.DataFrame(js.get("hourly"))
             df["timestamp"] = pd.to_datetime(df.pop("time"))
+            df["celda_lat"] = js.get("latitude")
+            df["celda_lon"] = js.get("longitude")
+            df["celda_elev"] = js.get("elevation")
             return df
         except requests.RequestException as e:
             if intento == reintentos - 1:
                 raise
             time.sleep(5 * (intento + 1))
-    return None
+    raise RuntimeError(f"Open-Meteo no respondió tras {reintentos} intentos ({lat}, {lon})")
 
 
-def traer_meteo(estaciones, coordenadas, desde, hasta, variables=VARIABLES_METEO, carpeta_cache=None):
+def traer_meteo(estaciones, coordenadas, desde, hasta, variables=VARIABLES_METEO,
+                carpeta_cache=None, modelo=METEO_MODELO, celda=METEO_CELDA):
     """
-    Descarga meteo para todas las estaciones, deduplicando por celda ERA5
-    (~0.25°): estaciones que caen en la misma celda comparten una sola descarga.
-    La descarga se hace año por año y se cachea en disco (carpeta_cache).
+    Descarga meteo para cada estación en su coordenada exacta (sin agrupar en celdas).
+    Si dos estaciones caen en la misma celda de la grilla, Open-Meteo devolverá la misma
+    serie: eso queda registrado en celda_lat/celda_lon y lo mide informe_resolucion().
     """
-    # 1. agrupar estaciones por celda (redondeo a la grilla)
-    celdas = {}
-    for codigo in estaciones:
-        lat, lon = coordenadas[codigo]
-        celda = (round(lat * 4) / 4, round(lon * 4) / 4)   # snap a 0.25°
-        celdas.setdefault(celda, []).append(codigo)
-
-    print(f"{len(estaciones)} estaciones → {len(celdas)} celdas ERA5 a descargar")
-
-    # 2. descargar una vez por celda (por tramos anuales) y replicar a sus estaciones
+    print(f"Descargando meteo para {len(estaciones)} estaciones "
+          f"(modelo: {modelo or 'best_match'}, celda: {celda})")
     tablas = []
-    for (clat, clon), codigos in celdas.items():
-        print(f"Celda ({clat}, {clon}) — {len(codigos)} estaciones...", end=" ")
-        base = pedir_por_tramos(clat, clon, desde, hasta, variables, carpeta_cache)
-        print(f"{len(base):,} horas")
-        for codigo in codigos:
-            nombre, comuna = estaciones[codigo]
-            t = base.copy()
-            t["codigo"] = codigo
-            t["estacion"] = nombre
-            t["comuna"] = comuna
-            tablas.append(t)
-
+    for codigo, (nombre, comuna) in estaciones.items():
+        lat, lon = coordenadas[codigo]
+        print(f"  {nombre:25} ({lat}, {lon})...", end=" ")
+        t = pedir_por_tramos(lat, lon, desde, hasta, variables, carpeta_cache, modelo, celda)
+        t["codigo"] = codigo
+        t["estacion"] = nombre
+        t["comuna"] = comuna
+        t["lat_estacion"] = lat
+        t["lon_estacion"] = lon
+        print(f"{len(t):,} horas · celda usada ({t['celda_lat'].iloc[0]}, {t['celda_lon'].iloc[0]})")
+        tablas.append(t)
     return pd.concat(tablas, ignore_index=True)
+
+
+def informe_resolucion(meteo, variables=("temperature_2m", "wind_speed_10m",
+                                         "boundary_layer_height", "relative_humidity_2m")):
+    """
+    Mide si la meteorología distingue entre estaciones (entregable de T3).
+    Devuelve un diccionario con tres tablas:
+      - "estaciones": celda usada por cada estación, distancia al punto pedido y elevación
+      - "celdas": qué estaciones comparten la misma celda (es decir, la misma serie)
+      - "variables": cuán parecidas son las series entre estaciones, por variable
+    """
+    # 1. Celda usada por cada estación
+    est = (meteo.groupby(["codigo", "estacion", "comuna"])
+                [["lat_estacion", "lon_estacion", "celda_lat", "celda_lon", "celda_elev"]]
+                .first().reset_index())
+    # distancia (km) entre el punto pedido y el centro de la celda usada
+    r = 6371.0
+    la1, lo1 = np.radians(est["lat_estacion"]), np.radians(est["lon_estacion"])
+    la2, lo2 = np.radians(est["celda_lat"]), np.radians(est["celda_lon"])
+    a = np.sin((la2 - la1) / 2) ** 2 + np.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2) ** 2
+    est["dist_celda_km"] = (2 * r * np.arcsin(np.sqrt(a))).round(2)
+    est["id_celda"] = est.groupby(["celda_lat", "celda_lon"]).ngroup() + 1
+
+    # 2. Estaciones que comparten celda
+    celdas = (est.groupby("id_celda")
+                 .agg(celda_lat=("celda_lat", "first"), celda_lon=("celda_lon", "first"),
+                      elevacion=("celda_elev", "first"), n_estaciones=("estacion", "size"),
+                      estaciones=("estacion", lambda s: ", ".join(sorted(s))))
+                 .reset_index())
+
+    # 3. Parecido entre series, por variable
+    filas = []
+    for v in variables:
+        if v not in meteo.columns:
+            continue
+        ancho = meteo.pivot_table(index="timestamp", columns="estacion", values=v)
+        corr = ancho.corr().to_numpy()
+        fuera_diag = corr[~np.eye(len(corr), dtype=bool)]
+        n_distintas = ancho.T.drop_duplicates().shape[0]   # series idénticas cuentan como una
+        filas.append({"variable": v, "series_distintas": n_distintas,
+                      "corr_mediana": round(float(np.nanmedian(fuera_diag)), 3),
+                      "corr_minima": round(float(np.nanmin(fuera_diag)), 3)})
+    variables_df = pd.DataFrame(filas)
+
+    return {"estaciones": est.drop(columns=["codigo"]), "celdas": celdas, "variables": variables_df}
 
 
 def agregar_derivadas(meteo):
@@ -139,9 +187,11 @@ def actualizar_meteo(estaciones, coordenadas, ruta_parquet, variables=VARIABLES_
     return combinado
 
 
-def pedir_por_tramos(lat, lon, desde, hasta, variables=VARIABLES_METEO, carpeta_cache=None):
+def pedir_por_tramos(lat, lon, desde, hasta, variables=VARIABLES_METEO, carpeta_cache=None,
+                     modelo=METEO_MODELO, celda=METEO_CELDA):
     """Pide año por año (peticiones chicas no hacen timeout) y guarda cada año completo en disco."""
     inicio, fin = pd.Timestamp(desde), pd.Timestamp(hasta)
+    etiqueta = f"{modelo or 'best_match'}_{celda}"   # si cambia el modelo, no se reusa el caché viejo
     tramos = []
     for anio in range(inicio.year, fin.year + 1):
         d = max(inicio, pd.Timestamp(f"{anio}-01-01"))
@@ -150,12 +200,13 @@ def pedir_por_tramos(lat, lon, desde, hasta, variables=VARIABLES_METEO, carpeta_
 
         cache = None
         if carpeta_cache:
-            cache = os.path.join(carpeta_cache, f"meteo_{lat}_{lon}_{anio}.parquet")
+            cache = os.path.join(carpeta_cache, f"meteo_{etiqueta}_{lat}_{lon}_{anio}.parquet")
             if os.path.exists(cache):
                 tramos.append(pd.read_parquet(cache))
                 continue
 
-        t = pedir_openmeteo(lat, lon, d.strftime("%Y-%m-%d"), h.strftime("%Y-%m-%d"), variables)
+        t = pedir_openmeteo(lat, lon, d.strftime("%Y-%m-%d"), h.strftime("%Y-%m-%d"),
+                            variables, modelo=modelo, celda=celda)
         if cache and anio_completo:      # el año en curso no se cachea: aún le faltan días
             t.to_parquet(cache, index=False)
         tramos.append(t)
